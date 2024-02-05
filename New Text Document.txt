@@ -1,0 +1,72 @@
+#include "msp.h"
+int main(void) {
+    volatile unsigned int i;
+
+    WDT_A->CTL = WDT_A_CTL_PW | WDT_A_CTL_HOLD;            // Stop WDT
+
+
+    // GPIO Setup
+    P1->OUT &= ~BIT5;                       // Clear LED to start
+    P1->DIR |= BIT5;                        // Set P1.0/LED to output
+
+    P2->SEL0 |= 0x80;
+    P2->SEL1 &= ~0x80;
+    P2->DIR |= 0x80;
+
+    TIMER_A0->CCR[0] = 50000-1;     /* PWM Period */
+    TIMER_A0->CCTL[4] = 0xE0;       /* CCR4 reset/set mode */
+    TIMER_A0->CCR[4] = 500;         /* begin from 1% */
+    TIMER_A0->CTL = 0x0214;         /* use SMCLK, count up, clear TA0R register */
+
+    P5->SEL1 |= BIT4;                       // Configure P5.4 for ADC
+    P5->SEL0 |= BIT4;
+
+    // Enable global interrupt
+    __enable_irq();
+
+    // Enable ADC interrupt in NVIC module
+    NVIC->ISER[0] = 1 << ((ADC14_IRQn) & 31);
+
+    // Sampling time, S&H=16, ADC14 on
+    ADC14->CTL0 = ADC14_CTL0_SHT0_2 | ADC14_CTL0_SHP | ADC14_CTL0_ON;
+    ADC14->CTL1 = ADC14_CTL1_RES_2;         // Use sampling timer, 12-bit conversion results
+
+    ADC14->MCTL[0] |= ADC14_MCTLN_INCH_1;   // A1 ADC input select; Vref=AVCC
+    ADC14->IER0 |= ADC14_IER0_IE0;          // Enable ADC conv complete interrupt
+
+    SCB->SCR &= ~SCB_SCR_SLEEPONEXIT_Msk;   // Wake up on exit from ISR
+
+    // Ensures SLEEPONEXIT takes effect immediately
+    __DSB();
+
+    while (1)
+    {
+        for (i = 20000; i > 0; i--);        // Delay
+
+        // Start sampling/conversion
+        ADC14->CTL0 |= ADC14_CTL0_ENC | ADC14_CTL0_SC;
+        __sleep();
+
+        __no_operation();                   // For debugger
+    }
+}
+
+// ADC14 interrupt service routine
+void ADC14_IRQHandler(void) {
+    TIMER_A0->CCR[4] += 2500;
+
+    if (TIMER_A0->CCR[4] > 50000)   /* wrap around when reaches 100% */
+        TIMER_A0->CCR[4] = 500; /* begin from 1% */// P1.0 = 1
+    P1->OUT ^= BIT5;
+    delayMs(50);
+
+}
+
+/* delay milliseconds when system clock is at 3 MHz */
+void delayMs(int n) {
+    int i, j;
+
+    for (j = 0; j < n; j++)
+        for (i = 750; i > 0; i--);      /* Delay */
+}
+
